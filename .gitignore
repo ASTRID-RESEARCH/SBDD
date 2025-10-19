@@ -1,0 +1,13 @@
+/resource/settings.robot
+Resource/Files/__pycache__
+/results
+/.vscode
+/Logs/*
+/sikuli_captured
+
+.txt
+*.html
+Sikuli_java*
+*.xml
+.idea
+/*.png
