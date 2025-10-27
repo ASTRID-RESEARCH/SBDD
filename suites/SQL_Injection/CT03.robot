@@ -4,6 +4,7 @@ Test Setup     Access the WebSite
 Test Teardown    Close the browser
 *** Test Cases ***
 CT03 - Login Bender
+    [Tags]    UI
     Given I click on account
     And I click on Login
     When I fill in the email field with the malicious data for Bender's account
