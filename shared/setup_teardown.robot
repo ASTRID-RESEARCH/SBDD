@@ -4,8 +4,8 @@ Resource    ../resource/settings.robot
 Library    OperatingSystem
 
 *** Keywords ***
-Access the WebSite
-    Given Access the OWASP Juice Shop website
-    Then I click Dismiss
-Close the browser
+Acesso ao site
+    Given eu acesso o site OWASP Juice Shop
+    Then eu clico em Dismiss
+Fechar o navegador
     Close All Browsers

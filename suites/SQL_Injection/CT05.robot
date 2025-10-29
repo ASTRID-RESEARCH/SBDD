@@ -1,18 +1,18 @@
 *** Settings ***
 Resource    ../../shared/setup_teardown.robot
 *** Test Cases ***
-CT05 - Log in with the non-existing accountant
+CT05 - Login com conta inexistente
     [Tags]    UI    API
-    Given that I perform the search for an item with the SQL introduced
-    And I receive the response from the request
-    When I check if the response brought the entire database schema in the parameters
-    And I perform the query using Union to create the nursing account
-    Then I verify the account creation
-    When I open the website
-    And I click on account to log in
-    And I click on connect
-    And I fill in the field with the registered email address via SQL injection
-    And I fill in the field with the registered password via SQL injection
-    And I click on the login button
-    And I click on account to log in
-    Then I check if I have access to account ephemeral
+    Given eu realizo a busca por um item com o SQL introduzido
+    And eu recebo a resposta da requisição
+    When eu verifico se a resposta trouxe o esquema inteiro do banco de dados nos parâmetros
+    And eu executo a consulta usando UNION para criar a conta de efêmera
+    Then eu verifico a criação da conta
+    When eu abro o site
+    And eu clico em conta para fazer login
+    And eu clico em conectar
+    And eu preencho o campo com o email cadastrado via injeção SQL
+    And eu preencho o campo com a senha cadastrada via injeção SQL
+    And eu clico no botão de login
+    And eu clico em conta para fazer login
+    Then eu verifico se tenho acesso à conta efêmera

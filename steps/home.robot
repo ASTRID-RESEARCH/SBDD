@@ -1,9 +1,9 @@
 *** Settings ***
 Resource    ../resource/settings.robot
 *** Keywords ***
-Access the OWASP Juice Shop website
+eu acesso o site OWASP Juice Shop
     SeleniumLibrary.Open Browser   ${config.url}     ${config.browser}
     Maximize Browser Window
-I click Dismiss
+eu clico em Dismiss
     Wait Until Element Is Visible    ${home.button_dismiss}
     Click Element        ${home.button_dismiss}

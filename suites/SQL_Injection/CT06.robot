@@ -1,8 +1,8 @@
 *** Settings ***
 Resource    ../../shared/setup_teardown.robot
 *** Test Cases ***
-CT06 - User Credentials
+CT06 - Credenciais dos Usuários
     [Tags]    API
-    Given that I insert a malicious SQL into the search endpoint to return the user's credentials
-    When I inserted removing other data inserting something unusual at the beginning of the query
-    Then check if the response contains the credentials
+    Given eu insiro um SQL malicioso no endpoint de busca para retornar as credenciais do usuário
+    When eu insiro removendo outros dados e adicionando algo incomum no início da consulta
+    Then eu verifico se a resposta contém as credenciais

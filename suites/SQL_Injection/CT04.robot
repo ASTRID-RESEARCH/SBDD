@@ -4,6 +4,6 @@ Resource    ../../shared/setup_teardown.robot
 *** Test Cases ***
 CT04 - Database Schema
     [Tags]    API
-    Given that I perform the search for an item with the SQL introduced
-    When I receive the response from the request
-    Then I check if the response brought the entire database schema in the parameters
+    Given eu realizo a busca por um item com o SQL introduzido
+    When eu recebo a resposta da requisição
+    Then eu verifico se a resposta trouxe o esquema inteiro do banco de dados nos parâmetros

