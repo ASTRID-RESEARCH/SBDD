@@ -1,18 +1,10 @@
 param(
-    [ValidateSet('setup', 'install-docker', 'enable-virtualization', 'run-tests', 'help')]
+    [ValidateSet('setup', 'install-docker', 'enable-virtualization', 'run-tests', 'setup-robot', 'help')]
     [string]$Command = 'setup',
     [string]$Marker = "",
     [switch]$Verbose,
     [switch]$Full
 )
-
-$IsLinux = $PSVersionTable.Platform -eq 'Unix' -or $PSVersionTable.OS -match 'Linux|Darwin'
-$IsMac = $PSVersionTable.OS -match 'Darwin'
-$IsWindows = $PSVersionTable.Platform -eq 'Win32NT' -or (-not $IsLinux -and -not $IsMac)
-
-if (-not $IsWindows) {
-    $IsWindows = $true
-}
 
 function Write-ColorOutput($ForegroundColor, $Message) {
     $fc = $host.UI.RawUI.ForegroundColor
@@ -21,15 +13,68 @@ function Write-ColorOutput($ForegroundColor, $Message) {
     $host.UI.RawUI.ForegroundColor = $fc
 }
 
+# Check and set PowerShell Execution Policy
+function Set-ExecutionPolicyIfNeeded {
+    $currentPolicy = Get-ExecutionPolicy -Scope CurrentUser
+    
+    if ($currentPolicy -eq 'Restricted' -or $currentPolicy -eq 'Undefined') {
+        Write-ColorOutput Yellow "PowerShell execution policy is restrictive: $currentPolicy"
+        Write-ColorOutput Yellow "Changing execution policy to RemoteSigned for CurrentUser..."
+        
+        try {
+            Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force -ErrorAction Stop
+            Write-ColorOutput Green "OK Execution policy changed to RemoteSigned"
+            Write-Output ""
+        } catch {
+            Write-ColorOutput Red ('ERROR Failed to change execution policy: ' + $_)
+            Write-ColorOutput Yellow ""
+            Write-ColorOutput Yellow "Please run this command manually in PowerShell as Administrator:"
+            Write-ColorOutput Cyan "Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force"
+            Write-Output ""
+            
+            $continue = Read-Host "Continue anyway? (y/n)"
+            if ($continue -ne 'y' -and $continue -ne 'Y') {
+                exit 1
+            }
+        }
+    }
+}
+
+# Set execution policy at script start
+Set-ExecutionPolicyIfNeeded
+
+function Show-PythonInstallHelp {
+    Write-Output ""
+    Write-ColorOutput Red "Python is NOT properly installed!"
+    Write-Output ""
+    Write-ColorOutput Yellow "You may have the Windows Store alias enabled."
+    Write-Output ""
+    Write-ColorOutput Cyan "To disable the Windows Store Python alias:"
+    Write-Output "  1. Open Windows Settings"
+    Write-Output "  2. Go to: Apps > Apps & features > App execution aliases"
+    Write-Output "  3. Turn OFF both 'python.exe' and 'python3.exe'"
+    Write-Output ""
+    Write-ColorOutput Cyan "Then install Python from the official website:"
+    Write-Output "  https://www.python.org/downloads/"
+    Write-Output ""
+    Write-Output "  - Download Python 3.13.7 or higher"
+    Write-Output "  - Run the installer"
+    Write-Output "  - CHECK 'Add Python to PATH'"
+    Write-Output "  - Complete installation"
+    Write-Output "  - Restart PowerShell"
+    Write-Output ""
+}
+
 function Show-Help {
     Write-ColorOutput Cyan "========================================"
-    Write-ColorOutput Cyan "SBDD - Setup & Management Script"
+    Write-ColorOutput Cyan 'SBDD - Setup & Management Script'
     Write-ColorOutput Cyan "========================================"
     Write-Output ""
-    Write-Output "Usage: .\setup.ps1 -Command <command> [options]"
+    Write-Output 'Usage: .\setup.ps1 -Command <command> [options]'
     Write-Output ""
     Write-Output "Commands:"
     Write-Output "  setup                 - Configure environment and start Juice Shop (default)"
+    Write-Output "  setup-robot           - Configure Robot Framework environment"
     Write-Output "  install-docker        - Install Docker Desktop"
     Write-Output "  enable-virtualization - Enable virtualization features"
     Write-Output "  run-tests            - Run pytest tests"
@@ -37,15 +82,304 @@ function Show-Help {
     Write-Output ""
     Write-Output "Options:"
     Write-Output "  -Full                - Full setup (virtualization + docker + dependencies)"
-    Write-Output "  -Marker <marker>     - Run tests with specific marker (ui, api)"
+    Write-Output '  -Marker <marker>     - Run tests with specific marker (ui, api)'
     Write-Output "  -Verbose             - Verbose output for tests"
     Write-Output ""
     Write-Output "Examples:"
     Write-Output "  .\setup.ps1"
     Write-Output "  .\setup.ps1 -Command setup -Full"
+    Write-Output "  .\setup.ps1 -Command setup-robot"
     Write-Output "  .\setup.ps1 -Command install-docker"
     Write-Output "  .\setup.ps1 -Command run-tests -Marker ui"
     Write-Output "  .\setup.ps1 -Command run-tests -Verbose"
+}
+
+function Test-PythonInPath {
+    $pythonPath = $null
+    
+    # Try python3 first
+    if (Get-Command python3 -ErrorAction SilentlyContinue) {
+        $testVersion = & python3 --version 2>&1
+        if ($testVersion -match "Python \d+\.\d+\.\d+") {
+            $pythonPath = (Get-Command python3).Source
+            return $pythonPath
+        }
+    }
+    
+    # Try python (avoid Windows Store alias)
+    if (Get-Command python -ErrorAction SilentlyContinue) {
+        $testVersion = & python --version 2>&1
+        if ($testVersion -match "Python \d+\.\d+\.\d+") {
+            $pythonPath = (Get-Command python).Source
+            return $pythonPath
+        }
+    }
+    
+    return $null
+}
+
+function Get-ChromeVersion {
+    $chromePaths = @(
+        "${env:ProgramFiles}\Google\Chrome\Application\chrome.exe",
+        "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe",
+        "$env:LOCALAPPDATA\Google\Chrome\Application\chrome.exe"
+    )
+    
+    foreach ($path in $chromePaths) {
+        if (Test-Path $path) {
+            $version = (Get-Item $path).VersionInfo.ProductVersion
+            return $version
+        }
+    }
+    
+    return $null
+}
+
+function Download-ChromeDriver {
+    param(
+        [string]$ChromeVersion
+    )
+    
+    Write-ColorOutput Yellow "Downloading ChromeDriver for Chrome version $ChromeVersion..."
+    
+    # Extract major version (e.g., 120.0.6099.109 -> 120)
+    $majorVersion = $ChromeVersion.Split('.')[0]
+    
+    # Chrome for Testing JSON endpoint
+    $jsonUrl = "https://googlechromelabs.github.io/chrome-for-testing/known-good-versions-with-downloads.json"
+    
+    try {
+        $response = Invoke-RestMethod -Uri $jsonUrl -UseBasicParsing
+        
+        # Find matching version
+        $matchingVersion = $response.versions | Where-Object { 
+            $_.version -like "$majorVersion.*" 
+        } | Select-Object -Last 1
+        
+        if (-not $matchingVersion) {
+            Write-ColorOutput Red "Could not find matching ChromeDriver version"
+            return $false
+        }
+        
+        $chromeDriverUrl = $matchingVersion.downloads.chromedriver | Where-Object { 
+            $_.platform -eq "win64" 
+        } | Select-Object -First 1 -ExpandProperty url
+        
+        if (-not $chromeDriverUrl) {
+            Write-ColorOutput Red "Could not find ChromeDriver download URL"
+            return $false
+        }
+        
+        $downloadPath = "$env:TEMP\chromedriver-win64.zip"
+        
+        Write-ColorOutput Yellow "Downloading from: $chromeDriverUrl"
+        $ProgressPreference = 'SilentlyContinue'
+        Invoke-WebRequest -Uri $chromeDriverUrl -OutFile $downloadPath -UseBasicParsing
+        
+        # Get Python Scripts directory
+        $pythonPath = Test-PythonInPath
+        if (-not $pythonPath) {
+            Write-ColorOutput Red "Python not found in PATH"
+            return $false
+        }
+        
+        $pythonDir = Split-Path -Parent $pythonPath
+        $scriptsDir = Join-Path $pythonDir "Scripts"
+        
+        if (-not (Test-Path $scriptsDir)) {
+            New-Item -ItemType Directory -Path $scriptsDir -Force | Out-Null
+        }
+        
+        # Extract chromedriver
+        Write-ColorOutput Yellow "Extracting ChromeDriver to $scriptsDir..."
+        Expand-Archive -Path $downloadPath -DestinationPath "$env:TEMP\chromedriver-temp" -Force
+        
+        # Move chromedriver.exe to Scripts directory
+        $extractedDriver = Get-ChildItem -Path "$env:TEMP\chromedriver-temp" -Recurse -Filter "chromedriver.exe" | Select-Object -First 1
+        
+        if ($extractedDriver) {
+            $destinationPath = Join-Path $scriptsDir "chromedriver.exe"
+            Copy-Item -Path $extractedDriver.FullName -Destination $destinationPath -Force
+            Write-ColorOutput Green "ChromeDriver installed successfully at: $destinationPath"
+        } else {
+            Write-ColorOutput Red "Could not find chromedriver.exe in downloaded archive"
+            return $false
+        }
+        
+        # Cleanup
+        Remove-Item -Path $downloadPath -Force -ErrorAction SilentlyContinue
+        Remove-Item -Path "$env:TEMP\chromedriver-temp" -Recurse -Force -ErrorAction SilentlyContinue
+        
+        return $true
+        
+    } catch {
+        Write-ColorOutput Red ('Error downloading ChromeDriver: ' + $_)
+        return $false
+    }
+}
+
+function Setup-RobotFramework {
+    Write-ColorOutput Cyan "========================================"
+    Write-ColorOutput Cyan "Robot Framework Environment Setup"
+    Write-ColorOutput Cyan "========================================"
+    Write-Output ""
+    
+    # Step 1: Check Python
+    Write-ColorOutput Yellow "[1/5] Checking Python installation..."
+    $pythonPath = Test-PythonInPath
+    
+    if (-not $pythonPath) {
+        Show-PythonInstallHelp
+        
+        $openBrowser = Read-Host "Open download page in browser? (y/n)"
+        if ($openBrowser -eq 'y' -or $openBrowser -eq 'Y') {
+            Start-Process "https://www.python.org/downloads/"
+        }
+        exit 1
+    }
+    
+    $pythonCmd = if (Get-Command python3 -ErrorAction SilentlyContinue) { "python3" } else { "python" }
+    $pythonVersion = & $pythonCmd --version 2>&1
+    Write-ColorOutput Green "OK Python found: $pythonVersion"
+    Write-ColorOutput Green "  Location: $pythonPath"
+    
+    # Step 2: Check VS Code
+    Write-Output ""
+    Write-ColorOutput Yellow "[2/5] Checking Visual Studio Code..."
+    $vscodePath = Get-Command code -ErrorAction SilentlyContinue
+    
+    if ($vscodePath) {
+        $vscodeVersion = & code --version 2>&1 | Select-Object -First 1
+        Write-ColorOutput Green "OK VS Code found: $vscodeVersion"
+    } else {
+        Write-ColorOutput Yellow "VS Code not found in PATH"
+        Write-Output ""
+        Write-ColorOutput Yellow "Download VS Code (recommended):"
+        Write-ColorOutput Cyan "https://code.visualstudio.com/download"
+        Write-Output ""
+        
+        $openBrowser = Read-Host "Open download page in browser? (y/n)"
+        if ($openBrowser -eq 'y' -or $openBrowser -eq 'Y') {
+            Start-Process "https://code.visualstudio.com/download"
+        }
+    }
+    
+    # Step 3: Install Robot Framework
+    Write-Output ""
+    Write-ColorOutput Yellow "[3/5] Installing Robot Framework..."
+    Write-Output ""
+    
+    try {
+        Write-ColorOutput Yellow "  -> Upgrading pip..."
+        & $pythonCmd -m pip install --upgrade pip --quiet
+        
+        Write-ColorOutput Yellow "  -> Installing robotframework..."
+        & $pythonCmd -m pip install robotframework --quiet
+        
+        Write-ColorOutput Yellow "  -> Installing robotframework-seleniumlibrary..."
+        & $pythonCmd -m pip install robotframework-seleniumlibrary --quiet
+        
+        Write-ColorOutput Green "OK Robot Framework installed successfully!"
+        
+    } catch {
+        Write-ColorOutput Red ('ERROR Error installing Robot Framework: ' + $_)
+        exit 1
+    }
+    
+    # Step 4: Install Robot Framework libraries
+    Write-Output ""
+    Write-ColorOutput Yellow "[4/5] Installing Robot Framework libraries..."
+    Write-Output ""
+    
+    $libraries = @(
+        @{Name="Selenium Library"; Package="robotframework-seleniumlibrary"},
+        @{Name="JSON Library"; Package="robotframework-jsonlibrary"},
+        @{Name="Requests Library"; Package="robotframework-requests"},
+        @{Name="Browser Library"; Package="robotframework-browser"}
+    )
+    
+    foreach ($lib in $libraries) {
+        try {
+            Write-ColorOutput Yellow "  -> Installing $($lib.Name)..."
+            & $pythonCmd -m pip install --upgrade $($lib.Package) --quiet
+            Write-ColorOutput Green "    OK $($lib.Name) installed"
+        } catch {
+            Write-ColorOutput Red ('    ERROR Error installing ' + $lib.Name + ': ' + $_)
+        }
+    }
+    
+    Write-Output ""
+    Write-ColorOutput Green "OK All libraries installed successfully!"
+    
+    # Step 5: Setup ChromeDriver
+    Write-Output ""
+    Write-ColorOutput Yellow "[5/5] Setting up ChromeDriver..."
+    Write-Output ""
+    
+    $chromeVersion = Get-ChromeVersion
+    
+    if (-not $chromeVersion) {
+        Write-ColorOutput Yellow "Google Chrome not found on this system"
+        Write-Output ""
+        Write-ColorOutput Yellow "To use Selenium with Chrome, you need to:"
+        Write-Output "  1. Install Google Chrome"
+        Write-Output "  2. Download ChromeDriver manually:"
+        Write-ColorOutput Cyan "     https://googlechromelabs.github.io/chrome-for-testing/"
+        Write-Output "  3. Extract chromedriver.exe to Python Scripts directory"
+        Write-Output ""
+    } else {
+        Write-ColorOutput Green "OK Google Chrome found: $chromeVersion"
+        Write-Output ""
+        
+        $installDriver = Read-Host "Download and install matching ChromeDriver? (y/n)"
+        
+        if ($installDriver -eq 'y' -or $installDriver -eq 'Y') {
+            $success = Download-ChromeDriver -ChromeVersion $chromeVersion
+            
+            if (-not $success) {
+                Write-Output ""
+                Write-ColorOutput Yellow "Manual installation required:"
+                Write-ColorOutput Cyan "https://googlechromelabs.github.io/chrome-for-testing/"
+                Write-Output ""
+                Write-Output "After download:"
+                Write-Output "  1. Extract chromedriver.exe"
+                Write-Output "  2. Copy to Python Scripts directory"
+                $pythonDir = Split-Path -Parent $pythonPath
+                Write-Output "     Location: $(Join-Path $pythonDir 'Scripts')"
+            }
+        } else {
+            Write-Output ""
+            Write-ColorOutput Yellow "ChromeDriver installation skipped."
+            Write-ColorOutput Yellow "Download manually when needed:"
+            Write-ColorOutput Cyan "https://googlechromelabs.github.io/chrome-for-testing/"
+        }
+    }
+    
+    # Summary
+    Write-Output ""
+    Write-ColorOutput Cyan "========================================"
+    Write-ColorOutput Green "OK Robot Framework Setup Complete!"
+    Write-ColorOutput Cyan "========================================"
+    Write-Output ""
+    
+    Write-ColorOutput Yellow "Installed components:"
+    Write-Output "  OK Robot Framework"
+    Write-Output "  OK Selenium Library"
+    Write-Output "  OK JSON Library"
+    Write-Output "  OK Requests Library"
+    Write-Output "  OK Browser Library"
+    Write-Output ""
+    
+    Write-ColorOutput Yellow "Next steps:"
+    Write-Output "  1. Open your Robot Framework project in VS Code"
+    Write-Output "  2. Install Robot Framework extensions (optional)"
+    Write-Output "  3. Start creating your test cases!"
+    Write-Output ""
+    
+    Write-ColorOutput Yellow "Verify installation:"
+    Write-Output "  robot --version"
+    Write-Output "  pip list | Select-String robot"
+    Write-Output ""
 }
 
 function Enable-Virtualization {
@@ -201,7 +535,7 @@ function Install-Docker {
         Invoke-WebRequest -Uri $dockerUrl -OutFile $downloadPath -UseBasicParsing
         Write-ColorOutput Green "Download complete!"
     } catch {
-        Write-ColorOutput Red "ERROR downloading Docker Desktop: $_"
+        Write-ColorOutput Red ('ERROR downloading Docker Desktop: ' + $_)
         exit 1
     }
 
@@ -212,7 +546,7 @@ function Install-Docker {
         Start-Process -FilePath $downloadPath -ArgumentList "install", "--quiet", "--accept-license" -Wait -NoNewWindow
         Write-ColorOutput Green "Installation complete!"
     } catch {
-        Write-ColorOutput Red "ERROR during installation: $_"
+        Write-ColorOutput Red ('ERROR during installation: ' + $_)
         exit 1
     }
 
@@ -226,6 +560,13 @@ function Setup-Environment {
     Write-ColorOutput Cyan "========================================"
     Write-ColorOutput Cyan "SBDD Environment Setup"
     Write-ColorOutput Cyan "========================================"
+    Write-Output ""
+    
+    # Ensure we're in the project root directory
+    $scriptPath = Split-Path -Parent $PSCommandPath
+    $projectRoot = Split-Path -Parent $scriptPath
+    Set-Location $projectRoot
+    Write-ColorOutput Yellow "Working directory: $projectRoot"
     Write-Output ""
 
     if ($Full) {
@@ -258,27 +599,81 @@ function Setup-Environment {
 
     Write-Output ""
     Write-ColorOutput Yellow "[2/4] Checking Python..."
-    $pythonCmd = if (Get-Command python3 -ErrorAction SilentlyContinue) { "python3" } 
-                 elseif (Get-Command python -ErrorAction SilentlyContinue) { "python" }
-                 else { $null }
-
-    if (-not $pythonCmd) {
-        Write-ColorOutput Red "Python not found!"
-        Write-ColorOutput Yellow "Download Python: https://www.python.org/downloads/"
+    
+    # Check for real Python installation (not Windows Store alias)
+    $pythonCmd = $null
+    $pythonValid = $false
+    
+    # Try python3 first
+    if (Get-Command python3 -ErrorAction SilentlyContinue) {
+        $testVersion = & python3 --version 2>&1
+        if ($testVersion -match "Python \d+\.\d+\.\d+") {
+            $pythonCmd = "python3"
+            $pythonValid = $true
+        }
+    }
+    
+    # Try python if python3 didn't work
+    if (-not $pythonValid -and (Get-Command python -ErrorAction SilentlyContinue)) {
+        $testVersion = & python --version 2>&1
+        if ($testVersion -match "Python \d+\.\d+\.\d+") {
+            $pythonCmd = "python"
+            $pythonValid = $true
+        }
+    }
+    
+    if (-not $pythonValid) {
+        Show-PythonInstallHelp
         exit 1
     }
+    
     Write-ColorOutput Green "Python found!"
     & $pythonCmd --version
 
     Write-Output ""
     Write-ColorOutput Yellow "[3/4] Installing Python dependencies..."
-    try {
-        & $pythonCmd -m pip install --upgrade pip --quiet
-        & $pythonCmd -m pip install -r requirements.txt --quiet
-        playwright install chromium
-        Write-ColorOutput Green "Dependencies installed!"
-    } catch {
-        Write-ColorOutput Red "ERROR installing dependencies: $_"
+    
+    $installSuccess = $true
+    
+    # Upgrade pip
+    Write-ColorOutput Yellow "  -> Upgrading pip..."
+    & $pythonCmd -m pip install --upgrade pip --quiet
+    if ($LASTEXITCODE -ne 0) {
+        Write-ColorOutput Red "  ERROR: Failed to upgrade pip"
+        $installSuccess = $false
+    }
+    
+    # Install requirements.txt if exists
+    if (Test-Path "requirements.txt") {
+        Write-ColorOutput Yellow "  -> Installing requirements.txt..."
+        & $pythonCmd -m pip install -r requirements.txt
+        if ($LASTEXITCODE -ne 0) {
+            Write-ColorOutput Red "  ERROR: Failed to install requirements.txt"
+            $installSuccess = $false
+        }
+    } else {
+        Write-ColorOutput Yellow "  -> requirements.txt not found, skipping..."
+    }
+    
+    # Install playwright browsers
+    Write-ColorOutput Yellow "  -> Installing Playwright browsers..."
+    & $pythonCmd -m pip install playwright --quiet
+    if ($LASTEXITCODE -eq 0) {
+        & $pythonCmd -m playwright install chromium
+        if ($LASTEXITCODE -ne 0) {
+            Write-ColorOutput Red "  ERROR: Failed to install Playwright browsers"
+            $installSuccess = $false
+        }
+    } else {
+        Write-ColorOutput Red "  ERROR: Failed to install Playwright"
+        $installSuccess = $false
+    }
+    
+    Write-Output ""
+    if ($installSuccess) {
+        Write-ColorOutput Green "Dependencies installed successfully!"
+    } else {
+        Write-ColorOutput Red "Some dependencies failed to install. Check errors above."
     }
 
     Write-Output ""
@@ -289,7 +684,7 @@ function Setup-Environment {
         $dockerPath = "C:\Program Files\Docker\Docker\Docker Desktop.exe"
         if (Test-Path $dockerPath) {
             Start-Process $dockerPath -ErrorAction SilentlyContinue
-            Write-ColorOutput Yellow "Waiting for Docker to start (60 seconds)..."
+            Write-ColorOutput Yellow 'Waiting for Docker to start (60 seconds)...'
             Start-Sleep -Seconds 60
         } else {
             Write-ColorOutput Red "Docker Desktop not found."
@@ -341,6 +736,13 @@ function Run-Tests {
     Write-ColorOutput Cyan "SBDD - Running Tests"
     Write-ColorOutput Cyan "========================================"
     Write-Output ""
+    
+    # Ensure we're in the project root directory
+    $scriptPath = Split-Path -Parent $PSCommandPath
+    $projectRoot = Split-Path -Parent $scriptPath
+    Set-Location $projectRoot
+    Write-ColorOutput Yellow "Working directory: $projectRoot"
+    Write-Output ""
 
     $pythonCmd = if (Get-Command python3 -ErrorAction SilentlyContinue) { "python3" } 
                  elseif (Get-Command python -ErrorAction SilentlyContinue) { "python" }
@@ -389,7 +791,7 @@ function Run-Tests {
             Write-ColorOutput Red "Some tests failed. Check logs above."
         }
     } catch {
-        Write-ColorOutput Red "Error running tests: $_"
+        Write-ColorOutput Red ('Error running tests: ' + $_)
         exit 1
     }
 }
@@ -403,6 +805,9 @@ switch ($Command) {
     }
     'install-docker' {
         Install-Docker
+    }
+    'setup-robot' {
+        Setup-RobotFramework
     }
     'run-tests' {
         Run-Tests
