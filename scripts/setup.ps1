@@ -587,6 +587,28 @@ function Setup-RobotFramework {
     Write-ColorOutput Green "OK All libraries installed successfully!"
     
     Write-Output ""
+    Write-ColorOutput Yellow "[4.1/5] Initializing Browser Library (Playwright)..."
+    Write-Output ""
+    
+    try {
+        Write-ColorOutput Yellow "  -> Running rfbrowser init..."
+        Write-ColorOutput Cyan "     (This will download Playwright browser binaries - may take a few minutes)"
+        Write-Output ""
+        
+        & $pythonCmd -m Browser.entry init
+        
+        if ($LASTEXITCODE -eq 0) {
+            Write-ColorOutput Green "OK Browser Library initialized successfully!"
+        } else {
+            Write-ColorOutput Red "ERROR Failed to initialize Browser Library"
+            Write-ColorOutput Yellow "You may need to run manually: python -m Browser.entry init"
+        }
+    } catch {
+        Write-ColorOutput Red "ERROR Error initializing Browser Library: $_"
+        Write-ColorOutput Yellow "Try running manually: python -m Browser.entry init"
+    }
+    
+    Write-Output ""
     Write-ColorOutput Yellow "[5/5] Setting up ChromeDriver..."
     Write-Output ""
     
@@ -901,16 +923,20 @@ function Setup-Environment {
         Write-ColorOutput Yellow "  -> requirements.txt not found, skipping..."
     }
     
-    Write-ColorOutput Yellow "  -> Installing Playwright browsers..."
-    & $pythonCmd -m pip install playwright --quiet
+    Write-ColorOutput Yellow "  -> Initializing Browser Library (Playwright)..."
+    & $pythonCmd -m pip install robotframework-browser --quiet
     if ($LASTEXITCODE -eq 0) {
-        & $pythonCmd -m playwright install chromium
+        Write-ColorOutput Yellow "  -> Installing Playwright browser binaries..."
+        Write-ColorOutput Cyan "     (This may take a few minutes - downloading browser binaries)"
+        & $pythonCmd -m Browser.entry init
         if ($LASTEXITCODE -ne 0) {
-            Write-ColorOutput Red "  ERROR: Failed to install Playwright browsers"
+            Write-ColorOutput Red "  ERROR: Failed to initialize Browser Library"
             $installSuccess = $false
+        } else {
+            Write-ColorOutput Green "  OK Browser Library initialized!"
         }
     } else {
-        Write-ColorOutput Red "  ERROR: Failed to install Playwright"
+        Write-ColorOutput Red "  ERROR: Failed to install Browser Library"
         $installSuccess = $false
     }
     
