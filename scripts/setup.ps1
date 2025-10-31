@@ -13,39 +13,58 @@ function Write-ColorOutput($ForegroundColor, $Message) {
     $host.UI.RawUI.ForegroundColor = $fc
 }
 
-# Check and set PowerShell Execution Policy
 function Set-ExecutionPolicyIfNeeded {
-    $currentPolicy = Get-ExecutionPolicy -Scope CurrentUser
+    Write-ColorOutput Cyan "========================================"
+    Write-ColorOutput Cyan "Checking PowerShell Execution Policy"
+    Write-ColorOutput Cyan "========================================"
+    Write-Output ""
+    
+    $currentPolicy = Get-ExecutionPolicy
+    Write-ColorOutput Yellow "Current Execution Policy: $currentPolicy"
     
     if ($currentPolicy -eq 'Restricted' -or $currentPolicy -eq 'Undefined') {
-        Write-ColorOutput Yellow "PowerShell execution policy is restrictive: $currentPolicy"
-        Write-ColorOutput Yellow "Changing execution policy to RemoteSigned for CurrentUser..."
+        Write-ColorOutput Red "Execution policy is TOO restrictive!"
+        Write-ColorOutput Yellow "Setting execution policy to Bypass for this process..."
+        Write-Output ""
         
         try {
-            Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force -ErrorAction Stop
-            Write-ColorOutput Green "OK Execution policy changed to RemoteSigned"
+            Set-ExecutionPolicy Bypass -Scope Process -Force -ErrorAction Stop
+            Write-ColorOutput Green "OK Execution policy set to Bypass for current process successfully!"
+            Write-ColorOutput Cyan "  (This change applies only to this PowerShell session)"
             Write-Output ""
-        } catch {
-            Write-ColorOutput Red ('ERROR Failed to change execution policy: ' + $_)
-            Write-ColorOutput Yellow ""
-            Write-ColorOutput Yellow "Please run this command manually in PowerShell as Administrator:"
-            Write-ColorOutput Cyan "Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force"
+        }
+        catch {
+            Write-ColorOutput Red "ERROR Failed to change execution policy: $_"
+            Write-Output ""
+            Write-ColorOutput Yellow "Manual steps required:"
+            Write-ColorOutput Cyan "1. Close this PowerShell window"
+            Write-ColorOutput Cyan "2. Open a new PowerShell window"
+            Write-ColorOutput Cyan "3. Run: Set-ExecutionPolicy Bypass -Scope Process -Force"
+            Write-ColorOutput Cyan "4. Then run this script again: .\scripts\setup.ps1"
             Write-Output ""
             
             $continue = Read-Host "Continue anyway? (y/n)"
             if ($continue -ne 'y' -and $continue -ne 'Y') {
+                Write-ColorOutput Red "Script execution cancelled."
                 exit 1
             }
         }
     }
+    elseif ($currentPolicy -eq 'AllSigned' -or $currentPolicy -eq 'RemoteSigned' -or $currentPolicy -eq 'Unrestricted' -or $currentPolicy -eq 'Bypass') {
+        Write-ColorOutput Green "OK Execution policy is properly configured: $currentPolicy"
+        Write-Output ""
+    }
+    else {
+        Write-ColorOutput Yellow "Unknown execution policy: $currentPolicy"
+        Write-Output ""
+    }
 }
 
-# Set execution policy at script start
 Set-ExecutionPolicyIfNeeded
 
 function Show-PythonInstallHelp {
     Write-Output ""
-    Write-ColorOutput Red "Python is NOT properly installed!"
+    Write-ColorOutput Red "Python 3.12 is NOT properly installed!"
     Write-Output ""
     Write-ColorOutput Yellow "You may have the Windows Store alias enabled."
     Write-Output ""
@@ -54,10 +73,10 @@ function Show-PythonInstallHelp {
     Write-Output "  2. Go to: Apps > Apps & features > App execution aliases"
     Write-Output "  3. Turn OFF both 'python.exe' and 'python3.exe'"
     Write-Output ""
-    Write-ColorOutput Cyan "Then install Python from the official website:"
-    Write-Output "  https://www.python.org/downloads/"
+    Write-ColorOutput Cyan "Then install Python 3.12 from the official website:"
+    Write-Output "  https://www.python.org/downloads/release/python-3120/"
     Write-Output ""
-    Write-Output "  - Download Python 3.13.7 or higher"
+    Write-Output "  - Download Python 3.12.x (latest 3.12 version)"
     Write-Output "  - Run the installer"
     Write-Output "  - CHECK 'Add Python to PATH'"
     Write-Output "  - Complete installation"
@@ -96,26 +115,223 @@ function Show-Help {
 
 function Test-PythonInPath {
     $pythonPath = $null
+    $pythonVersion = $null
     
-    # Try python3 first
     if (Get-Command python3 -ErrorAction SilentlyContinue) {
         $testVersion = & python3 --version 2>&1
-        if ($testVersion -match "Python \d+\.\d+\.\d+") {
+        if ($testVersion -match "Python (\d+\.\d+)\.\d+") {
             $pythonPath = (Get-Command python3).Source
-            return $pythonPath
+            $pythonVersion = $matches[1]
+            return @{Path=$pythonPath; Version=$pythonVersion; Command="python3"}
         }
     }
     
-    # Try python (avoid Windows Store alias)
     if (Get-Command python -ErrorAction SilentlyContinue) {
         $testVersion = & python --version 2>&1
-        if ($testVersion -match "Python \d+\.\d+\.\d+") {
+        if ($testVersion -match "Python (\d+\.\d+)\.\d+") {
             $pythonPath = (Get-Command python).Source
-            return $pythonPath
+            $pythonVersion = $matches[1]
+            return @{Path=$pythonPath; Version=$pythonVersion; Command="python"}
         }
     }
     
     return $null
+}
+
+function Get-InstalledPythonVersions {
+    $pythonVersions = @()
+    
+    $paths = @(
+        "$env:ProgramFiles\Python*",
+        "${env:ProgramFiles(x86)}\Python*",
+        "$env:LOCALAPPDATA\Programs\Python\Python*"
+    )
+    
+    foreach ($pathPattern in $paths) {
+        $foundPaths = Get-ChildItem -Path $pathPattern -ErrorAction SilentlyContinue
+        foreach ($path in $foundPaths) {
+            $pythonExe = Join-Path $path.FullName "python.exe"
+            if (Test-Path $pythonExe) {
+                try {
+                    $versionOutput = & $pythonExe --version 2>&1
+                    if ($versionOutput -match "Python (\d+\.\d+\.\d+)") {
+                        $pythonVersions += @{
+                            Path = $path.FullName
+                            Version = $matches[1]
+                            Executable = $pythonExe
+                        }
+                    }
+                } catch {
+                    continue
+                }
+            }
+        }
+    }
+    
+    return $pythonVersions
+}
+
+function Uninstall-Python {
+    param(
+        [string]$PythonPath
+    )
+    
+    Write-ColorOutput Yellow "Attempting to uninstall Python from: $PythonPath"
+    
+    $uninstallers = @(
+        (Join-Path $PythonPath "Uninstall.exe"),
+        (Join-Path $PythonPath "python-*.exe")
+    )
+    
+    foreach ($uninstaller in $uninstallers) {
+        $found = Get-ChildItem -Path $uninstaller -ErrorAction SilentlyContinue
+        if ($found) {
+            Write-ColorOutput Yellow "Running uninstaller: $($found.FullName)"
+            Start-Process -FilePath $found.FullName -ArgumentList "/uninstall", "/quiet" -Wait -NoNewWindow
+            Write-ColorOutput Green "Uninstall completed for: $PythonPath"
+            return $true
+        }
+    }
+    
+    Write-ColorOutput Yellow "Looking for Python in installed apps..."
+    $pythonApps = Get-Package -Name "*Python*" -ErrorAction SilentlyContinue | Where-Object {
+        $_.FastPackageReference -like "*$PythonPath*" -or $_.Name -like "*Python 3.*"
+    }
+    
+    foreach ($app in $pythonApps) {
+        try {
+            Write-ColorOutput Yellow "Uninstalling: $($app.Name)"
+            Uninstall-Package -Name $app.Name -Force -ErrorAction Stop
+            Write-ColorOutput Green "Successfully uninstalled: $($app.Name)"
+            return $true
+        } catch {
+            Write-ColorOutput Red "Failed to uninstall $($app.Name): $_"
+        }
+    }
+    
+    Write-ColorOutput Red "Could not find uninstaller. Please uninstall manually via Windows Settings > Apps."
+    return $false
+}
+
+function Install-Python312 {
+    Set-ExecutionPolicyIfNeeded
+    
+    Write-ColorOutput Cyan "========================================"
+    Write-ColorOutput Cyan "Installing Python 3.12"
+    Write-ColorOutput Cyan "========================================"
+    Write-Output ""
+    
+    Write-ColorOutput Yellow "Fetching latest Python 3.12 version..."
+    
+    $python312Url = "https://www.python.org/ftp/python/3.12.7/python-3.12.7-amd64.exe"
+    $downloadPath = "$env:TEMP\python-3.12.7-amd64.exe"
+    
+    Write-ColorOutput Yellow "Downloading Python 3.12.7..."
+    Write-ColorOutput Cyan "URL: $python312Url"
+    
+    try {
+        $ProgressPreference = 'SilentlyContinue'
+        Invoke-WebRequest -Uri $python312Url -OutFile $downloadPath -UseBasicParsing
+        Write-ColorOutput Green "Download complete!"
+    } catch {
+        Write-ColorOutput Red "ERROR downloading Python 3.12: $_"
+        Write-Output ""
+        Write-ColorOutput Yellow "Please download manually from:"
+        Write-ColorOutput Cyan "https://www.python.org/downloads/release/python-3127/"
+        return $false
+    }
+    
+    Write-Output ""
+    Write-ColorOutput Yellow "Installing Python 3.12.7..."
+    Write-ColorOutput Yellow "This may take a few minutes..."
+    
+    try {
+        $installArgs = @(
+            "/quiet",
+            "InstallAllUsers=1",
+            "PrependPath=1",
+            "Include_test=0",
+            "Include_doc=0"
+        )
+        
+        Start-Process -FilePath $downloadPath -ArgumentList $installArgs -Wait -NoNewWindow
+        Write-ColorOutput Green "Installation complete!"
+        
+        Remove-Item -Path $downloadPath -Force -ErrorAction SilentlyContinue
+        
+        Write-Output ""
+        Write-ColorOutput Yellow "IMPORTANT: You must restart PowerShell for changes to take effect!"
+        Write-Output ""
+        
+        return $true
+        
+    } catch {
+        Write-ColorOutput Red "ERROR during installation: $_"
+        Remove-Item -Path $downloadPath -Force -ErrorAction SilentlyContinue
+        return $false
+    }
+}
+
+function Verify-Python312 {
+    Write-ColorOutput Yellow "Verifying Python installation..."
+    
+    $pythonInfo = Test-PythonInPath
+    
+    if (-not $pythonInfo) {
+        Write-ColorOutput Red "Python not found in PATH!"
+        return $false
+    }
+    
+    if ($pythonInfo.Version -ne "3.12") {
+        Write-ColorOutput Red "Wrong Python version detected: $($pythonInfo.Version)"
+        Write-ColorOutput Yellow "Required version: 3.12"
+        
+        $installedVersions = Get-InstalledPythonVersions
+        
+        if ($installedVersions.Count -gt 0) {
+            Write-Output ""
+            Write-ColorOutput Yellow "Found installed Python versions:"
+            foreach ($ver in $installedVersions) {
+                Write-Output "  - Version $($ver.Version) at $($ver.Path)"
+            }
+            Write-Output ""
+            
+            $uninstallOthers = Read-Host "Uninstall incompatible Python versions? (y/n)"
+            
+            if ($uninstallOthers -eq 'y' -or $uninstallOthers -eq 'Y') {
+                foreach ($ver in $installedVersions) {
+                    if (-not $ver.Version.StartsWith("3.12")) {
+                        $success = Uninstall-Python -PythonPath $ver.Path
+                        if ($success) {
+                            Write-ColorOutput Green "Uninstalled Python $($ver.Version)"
+                        }
+                    }
+                }
+            }
+        }
+        
+        Write-Output ""
+        $installNew = Read-Host "Install Python 3.12 now? (y/n)"
+        
+        if ($installNew -eq 'y' -or $installNew -eq 'Y') {
+            $success = Install-Python312
+            if ($success) {
+                Write-Output ""
+                Write-ColorOutput Green "Python 3.12 installed successfully!"
+                Write-ColorOutput Yellow "Please restart PowerShell and run this script again."
+                exit 0
+            } else {
+                exit 1
+            }
+        } else {
+            Write-ColorOutput Yellow "Python 3.12 is required. Please install it manually."
+            Show-PythonInstallHelp
+            exit 1
+        }
+    }
+    
+    Write-ColorOutput Green "OK Python 3.12 detected: $($pythonInfo.Path)"
+    return $true
 }
 
 function Get-ChromeVersion {
@@ -135,23 +351,98 @@ function Get-ChromeVersion {
     return $null
 }
 
-function Download-ChromeDriver {
+function Get-ChromeDriverVersion {
     param(
-        [string]$ChromeVersion
+        [string]$ChromeDriverPath
     )
     
+    if (-not (Test-Path $ChromeDriverPath)) {
+        return $null
+    }
+    
+    try {
+        $versionOutput = & $ChromeDriverPath --version 2>&1
+        if ($versionOutput -match "ChromeDriver (\d+\.\d+\.\d+\.\d+)") {
+            return $matches[1]
+        }
+    } catch {
+        return $null
+    }
+    
+    return $null
+}
+
+function Test-ChromeDriverCompatibility {
+    param(
+        [string]$ChromeVersion,
+        [string]$ChromeDriverVersion
+    )
+    
+    if (-not $ChromeDriverVersion) {
+        return $false
+    }
+    
+    $chromeMajor = $ChromeVersion.Split('.')[0]
+    $driverMajor = $ChromeDriverVersion.Split('.')[0]
+    
+    return $chromeMajor -eq $driverMajor
+}
+
+function Download-ChromeDriver {
+    param(
+        [string]$ChromeVersion,
+        [switch]$Force
+    )
+    
+    $pythonInfo = Test-PythonInPath
+    if (-not $pythonInfo) {
+        Write-ColorOutput Red "Python not found in PATH"
+        return $false
+    }
+    
+    $pythonDir = Split-Path -Parent $pythonInfo.Path
+    $scriptsDir = Join-Path $pythonDir "Scripts"
+    
+    if (-not (Test-Path $scriptsDir)) {
+        New-Item -ItemType Directory -Path $scriptsDir -Force | Out-Null
+    }
+    
+    $chromeDriverPath = Join-Path $scriptsDir "chromedriver.exe"
+    
+    if ((Test-Path $chromeDriverPath) -and -not $Force) {
+        $existingVersion = Get-ChromeDriverVersion -ChromeDriverPath $chromeDriverPath
+        
+        if ($existingVersion) {
+            Write-ColorOutput Yellow "Existing ChromeDriver found: $existingVersion"
+            
+            $isCompatible = Test-ChromeDriverCompatibility -ChromeVersion $ChromeVersion -ChromeDriverVersion $existingVersion
+            
+            if ($isCompatible) {
+                Write-ColorOutput Green "ChromeDriver is already compatible with Chrome $ChromeVersion"
+                Write-Output ""
+                $reinstall = Read-Host "Reinstall ChromeDriver anyway? (y/n)"
+                
+                if ($reinstall -ne 'y' -and $reinstall -ne 'Y') {
+                    Write-ColorOutput Green "Keeping existing ChromeDriver"
+                    return $true
+                }
+            } else {
+                Write-ColorOutput Yellow "ChromeDriver version $existingVersion is NOT compatible with Chrome $ChromeVersion"
+                Write-ColorOutput Yellow "A compatible version will be installed automatically"
+            }
+        }
+    }
+    
+    Write-Output ""
     Write-ColorOutput Yellow "Downloading ChromeDriver for Chrome version $ChromeVersion..."
     
-    # Extract major version (e.g., 120.0.6099.109 -> 120)
     $majorVersion = $ChromeVersion.Split('.')[0]
     
-    # Chrome for Testing JSON endpoint
     $jsonUrl = "https://googlechromelabs.github.io/chrome-for-testing/known-good-versions-with-downloads.json"
     
     try {
         $response = Invoke-RestMethod -Uri $jsonUrl -UseBasicParsing
         
-        # Find matching version
         $matchingVersion = $response.versions | Where-Object { 
             $_.version -like "$majorVersion.*" 
         } | Select-Object -Last 1
@@ -172,43 +463,37 @@ function Download-ChromeDriver {
         
         $downloadPath = "$env:TEMP\chromedriver-win64.zip"
         
-        Write-ColorOutput Yellow "Downloading from: $chromeDriverUrl"
+        Write-ColorOutput Yellow "Downloading ChromeDriver version: $($matchingVersion.version)"
+        Write-ColorOutput Cyan "URL: $chromeDriverUrl"
         $ProgressPreference = 'SilentlyContinue'
         Invoke-WebRequest -Uri $chromeDriverUrl -OutFile $downloadPath -UseBasicParsing
         
-        # Get Python Scripts directory
-        $pythonPath = Test-PythonInPath
-        if (-not $pythonPath) {
-            Write-ColorOutput Red "Python not found in PATH"
-            return $false
+        if (Test-Path $chromeDriverPath) {
+            Write-ColorOutput Yellow "Removing existing ChromeDriver..."
+            Remove-Item -Path $chromeDriverPath -Force -ErrorAction SilentlyContinue
         }
         
-        $pythonDir = Split-Path -Parent $pythonPath
-        $scriptsDir = Join-Path $pythonDir "Scripts"
-        
-        if (-not (Test-Path $scriptsDir)) {
-            New-Item -ItemType Directory -Path $scriptsDir -Force | Out-Null
-        }
-        
-        # Extract chromedriver
         Write-ColorOutput Yellow "Extracting ChromeDriver to $scriptsDir..."
         Expand-Archive -Path $downloadPath -DestinationPath "$env:TEMP\chromedriver-temp" -Force
         
-        # Move chromedriver.exe to Scripts directory
         $extractedDriver = Get-ChildItem -Path "$env:TEMP\chromedriver-temp" -Recurse -Filter "chromedriver.exe" | Select-Object -First 1
         
         if ($extractedDriver) {
-            $destinationPath = Join-Path $scriptsDir "chromedriver.exe"
-            Copy-Item -Path $extractedDriver.FullName -Destination $destinationPath -Force
-            Write-ColorOutput Green "ChromeDriver installed successfully at: $destinationPath"
+            Copy-Item -Path $extractedDriver.FullName -Destination $chromeDriverPath -Force
+            Write-ColorOutput Green "ChromeDriver $($matchingVersion.version) installed successfully!"
+            Write-ColorOutput Green "Location: $chromeDriverPath"
         } else {
             Write-ColorOutput Red "Could not find chromedriver.exe in downloaded archive"
             return $false
         }
         
-        # Cleanup
         Remove-Item -Path $downloadPath -Force -ErrorAction SilentlyContinue
         Remove-Item -Path "$env:TEMP\chromedriver-temp" -Recurse -Force -ErrorAction SilentlyContinue
+        
+        $newVersion = Get-ChromeDriverVersion -ChromeDriverPath $chromeDriverPath
+        if ($newVersion) {
+            Write-ColorOutput Green "Verification: ChromeDriver version $newVersion is ready!"
+        }
         
         return $true
         
@@ -224,26 +509,18 @@ function Setup-RobotFramework {
     Write-ColorOutput Cyan "========================================"
     Write-Output ""
     
-    # Step 1: Check Python
-    Write-ColorOutput Yellow "[1/5] Checking Python installation..."
-    $pythonPath = Test-PythonInPath
+    Write-ColorOutput Yellow "[1/5] Checking Python 3.12 installation..."
     
-    if (-not $pythonPath) {
-        Show-PythonInstallHelp
-        
-        $openBrowser = Read-Host "Open download page in browser? (y/n)"
-        if ($openBrowser -eq 'y' -or $openBrowser -eq 'Y') {
-            Start-Process "https://www.python.org/downloads/"
-        }
+    if (-not (Verify-Python312)) {
         exit 1
     }
     
-    $pythonCmd = if (Get-Command python3 -ErrorAction SilentlyContinue) { "python3" } else { "python" }
+    $pythonInfo = Test-PythonInPath
+    $pythonCmd = $pythonInfo.Command
     $pythonVersion = & $pythonCmd --version 2>&1
     Write-ColorOutput Green "OK Python found: $pythonVersion"
-    Write-ColorOutput Green "  Location: $pythonPath"
+    Write-ColorOutput Green "  Location: $($pythonInfo.Path)"
     
-    # Step 2: Check VS Code
     Write-Output ""
     Write-ColorOutput Yellow "[2/5] Checking Visual Studio Code..."
     $vscodePath = Get-Command code -ErrorAction SilentlyContinue
@@ -264,7 +541,6 @@ function Setup-RobotFramework {
         }
     }
     
-    # Step 3: Install Robot Framework
     Write-Output ""
     Write-ColorOutput Yellow "[3/5] Installing Robot Framework..."
     Write-Output ""
@@ -286,7 +562,6 @@ function Setup-RobotFramework {
         exit 1
     }
     
-    # Step 4: Install Robot Framework libraries
     Write-Output ""
     Write-ColorOutput Yellow "[4/5] Installing Robot Framework libraries..."
     Write-Output ""
@@ -311,7 +586,6 @@ function Setup-RobotFramework {
     Write-Output ""
     Write-ColorOutput Green "OK All libraries installed successfully!"
     
-    # Step 5: Setup ChromeDriver
     Write-Output ""
     Write-ColorOutput Yellow "[5/5] Setting up ChromeDriver..."
     Write-Output ""
@@ -331,31 +605,22 @@ function Setup-RobotFramework {
         Write-ColorOutput Green "OK Google Chrome found: $chromeVersion"
         Write-Output ""
         
-        $installDriver = Read-Host "Download and install matching ChromeDriver? (y/n)"
+        Write-ColorOutput Yellow "Checking ChromeDriver compatibility..."
+        $success = Download-ChromeDriver -ChromeVersion $chromeVersion
         
-        if ($installDriver -eq 'y' -or $installDriver -eq 'Y') {
-            $success = Download-ChromeDriver -ChromeVersion $chromeVersion
-            
-            if (-not $success) {
-                Write-Output ""
-                Write-ColorOutput Yellow "Manual installation required:"
-                Write-ColorOutput Cyan "https://googlechromelabs.github.io/chrome-for-testing/"
-                Write-Output ""
-                Write-Output "After download:"
-                Write-Output "  1. Extract chromedriver.exe"
-                Write-Output "  2. Copy to Python Scripts directory"
-                $pythonDir = Split-Path -Parent $pythonPath
-                Write-Output "     Location: $(Join-Path $pythonDir 'Scripts')"
-            }
-        } else {
+        if (-not $success) {
             Write-Output ""
-            Write-ColorOutput Yellow "ChromeDriver installation skipped."
-            Write-ColorOutput Yellow "Download manually when needed:"
+            Write-ColorOutput Yellow "Manual installation required:"
             Write-ColorOutput Cyan "https://googlechromelabs.github.io/chrome-for-testing/"
+            Write-Output ""
+            Write-Output "After download:"
+            Write-Output "  1. Extract chromedriver.exe"
+            Write-Output "  2. Copy to Python Scripts directory"
+            $pythonDir = Split-Path -Parent $pythonInfo.Path
+            Write-Output "     Location: $(Join-Path $pythonDir 'Scripts')"
         }
     }
     
-    # Summary
     Write-Output ""
     Write-ColorOutput Cyan "========================================"
     Write-ColorOutput Green "OK Robot Framework Setup Complete!"
@@ -383,6 +648,8 @@ function Setup-RobotFramework {
 }
 
 function Enable-Virtualization {
+    Set-ExecutionPolicyIfNeeded
+    
     if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
         Write-ColorOutput Red "This command requires Administrator privileges!"
         Write-ColorOutput Yellow "Right-click PowerShell and select 'Run as Administrator'"
@@ -481,6 +748,8 @@ function Enable-Virtualization {
 }
 
 function Install-Docker {
+    Set-ExecutionPolicyIfNeeded
+    
     if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
         Write-ColorOutput Red "This command requires Administrator privileges!"
         exit 1
@@ -562,7 +831,6 @@ function Setup-Environment {
     Write-ColorOutput Cyan "========================================"
     Write-Output ""
     
-    # Ensure we're in the project root directory
     $scriptPath = Split-Path -Parent $PSCommandPath
     $projectRoot = Split-Path -Parent $scriptPath
     Set-Location $projectRoot
@@ -598,36 +866,16 @@ function Setup-Environment {
     docker --version
 
     Write-Output ""
-    Write-ColorOutput Yellow "[2/4] Checking Python..."
+    Write-ColorOutput Yellow "[2/4] Checking Python 3.12..."
     
-    # Check for real Python installation (not Windows Store alias)
-    $pythonCmd = $null
-    $pythonValid = $false
-    
-    # Try python3 first
-    if (Get-Command python3 -ErrorAction SilentlyContinue) {
-        $testVersion = & python3 --version 2>&1
-        if ($testVersion -match "Python \d+\.\d+\.\d+") {
-            $pythonCmd = "python3"
-            $pythonValid = $true
-        }
-    }
-    
-    # Try python if python3 didn't work
-    if (-not $pythonValid -and (Get-Command python -ErrorAction SilentlyContinue)) {
-        $testVersion = & python --version 2>&1
-        if ($testVersion -match "Python \d+\.\d+\.\d+") {
-            $pythonCmd = "python"
-            $pythonValid = $true
-        }
-    }
-    
-    if (-not $pythonValid) {
-        Show-PythonInstallHelp
+    if (-not (Verify-Python312)) {
         exit 1
     }
     
-    Write-ColorOutput Green "Python found!"
+    $pythonInfo = Test-PythonInPath
+    $pythonCmd = $pythonInfo.Command
+    
+    Write-ColorOutput Green "Python 3.12 found!"
     & $pythonCmd --version
 
     Write-Output ""
@@ -635,7 +883,6 @@ function Setup-Environment {
     
     $installSuccess = $true
     
-    # Upgrade pip
     Write-ColorOutput Yellow "  -> Upgrading pip..."
     & $pythonCmd -m pip install --upgrade pip --quiet
     if ($LASTEXITCODE -ne 0) {
@@ -643,7 +890,6 @@ function Setup-Environment {
         $installSuccess = $false
     }
     
-    # Install requirements.txt if exists
     if (Test-Path "requirements.txt") {
         Write-ColorOutput Yellow "  -> Installing requirements.txt..."
         & $pythonCmd -m pip install -r requirements.txt
@@ -655,7 +901,6 @@ function Setup-Environment {
         Write-ColorOutput Yellow "  -> requirements.txt not found, skipping..."
     }
     
-    # Install playwright browsers
     Write-ColorOutput Yellow "  -> Installing Playwright browsers..."
     & $pythonCmd -m pip install playwright --quiet
     if ($LASTEXITCODE -eq 0) {
@@ -674,6 +919,23 @@ function Setup-Environment {
         Write-ColorOutput Green "Dependencies installed successfully!"
     } else {
         Write-ColorOutput Red "Some dependencies failed to install. Check errors above."
+    }
+
+    Write-Output ""
+    Write-ColorOutput Yellow "[3.1/4] Checking ChromeDriver compatibility..."
+    
+    $chromeVersion = Get-ChromeVersion
+    if ($chromeVersion) {
+        Write-ColorOutput Green "Chrome version: $chromeVersion"
+        $chromeDriverSuccess = Download-ChromeDriver -ChromeVersion $chromeVersion
+        
+        if ($chromeDriverSuccess) {
+            Write-ColorOutput Green "ChromeDriver is ready!"
+        } else {
+            Write-ColorOutput Yellow "ChromeDriver setup had issues, but continuing..."
+        }
+    } else {
+        Write-ColorOutput Yellow "Chrome not found. ChromeDriver setup skipped."
     }
 
     Write-Output ""
@@ -737,21 +999,18 @@ function Run-Tests {
     Write-ColorOutput Cyan "========================================"
     Write-Output ""
     
-    # Ensure we're in the project root directory
     $scriptPath = Split-Path -Parent $PSCommandPath
     $projectRoot = Split-Path -Parent $scriptPath
     Set-Location $projectRoot
     Write-ColorOutput Yellow "Working directory: $projectRoot"
     Write-Output ""
 
-    $pythonCmd = if (Get-Command python3 -ErrorAction SilentlyContinue) { "python3" } 
-                 elseif (Get-Command python -ErrorAction SilentlyContinue) { "python" }
-                 else { $null }
-
-    if (-not $pythonCmd) {
-        Write-ColorOutput Red "Python not found!"
+    if (-not (Verify-Python312)) {
         exit 1
     }
+    
+    $pythonInfo = Test-PythonInPath
+    $pythonCmd = $pythonInfo.Command
 
     Write-ColorOutput Yellow "Checking pytest..."
     $pytestVersion = & $pythonCmd -m pytest --version 2>&1
@@ -801,21 +1060,33 @@ switch ($Command) {
         Show-Help
     }
     'enable-virtualization' {
+        Write-ColorOutput Cyan "Executing: Enable Virtualization"
+        Write-Output ""
         Enable-Virtualization
     }
     'install-docker' {
+        Write-ColorOutput Cyan "Executing: Install Docker"
+        Write-Output ""
         Install-Docker
     }
     'setup-robot' {
+        Write-ColorOutput Cyan "Executing: Setup Robot Framework"
+        Write-Output ""
         Setup-RobotFramework
     }
     'run-tests' {
+        Write-ColorOutput Cyan "Executing: Run Tests"
+        Write-Output ""
         Run-Tests
     }
     'setup' {
+        Write-ColorOutput Cyan "Executing: Full Environment Setup"
+        Write-Output ""
         Setup-Environment
     }
     default {
+        Write-ColorOutput Cyan "Executing: Default Environment Setup"
+        Write-Output ""
         Setup-Environment
     }
 }
