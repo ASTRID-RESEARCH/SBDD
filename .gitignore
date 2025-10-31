@@ -5,7 +5,6 @@ Resource/Files/__pycache__
 /Logs/*
 /sikuli_captured
 
-*.txt
 *.html
 Sikuli_java*
 *.xml
