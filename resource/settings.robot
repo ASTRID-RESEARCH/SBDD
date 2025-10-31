@@ -6,6 +6,6 @@ Library    RequestsLibrary
 Library    Collections
 *** Variables ***
 &{config}
-...    browser=
-...    url=
+...    browser=chrome
+...    url=http://localhost:3000/
 ...    status=200

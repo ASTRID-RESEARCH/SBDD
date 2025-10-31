@@ -5,6 +5,7 @@ eu abro o site
     New Browser    chromium    headless=False
     New Page    ${config.url}
     Click    ${home.button_dismiss}
+    Sleep    3
 eu realizo a busca por um item com o SQL introduzido
     ${HEADER}=             Create Dictionary    Content-Type=application/json
     ${response}=    GET    url=http://localhost:3000/rest/products/search?q=apple')) UNION SELECT sql,2,3,4,5,6,7,8,9 FROM sqlite_master --       expected_status=${config.status}    headers=${HEADER}    
