@@ -1,6 +1,5 @@
 *** Settings ***
-Library    SikuliLibrary
-Resource    ../../shared/setup_teardown.robot
+Resource    ../shared/setup_teardown.robot
 *** Test Cases ***
 CT04 - Database Schema
     [Tags]    API

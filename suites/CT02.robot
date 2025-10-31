@@ -1,5 +1,5 @@
 *** Settings ***
-Resource    ../../shared/setup_teardown.robot
+Resource    ../shared/setup_teardown.robot
 Test Setup    Acesso ao site
 Test Teardown    Fechar o navegador
 *** Test Cases ***

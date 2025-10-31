@@ -1,5 +1,5 @@
 *** Settings ***
-Resource    ../../shared/setup_teardown.robot
+Resource    ../shared/setup_teardown.robot
 *** Test Cases ***
 CT06 - Credenciais dos Usuários
     [Tags]    API
