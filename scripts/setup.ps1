@@ -954,36 +954,89 @@ function Setup-Environment {
         }
     }
 
+    if (-not (Test-Path "docker-compose.yml")) {
+        Write-ColorOutput Red "ERROR: docker-compose.yml not found!"
+        Write-ColorOutput Yellow "Please ensure docker-compose.yml exists in the project root."
+        exit 1
+    }
+
     Write-ColorOutput Yellow "Stopping existing containers..."
-    docker-compose down 2>$null
+    docker-compose down 2>&1 | Out-Null
 
     Write-ColorOutput Yellow "Pulling OWASP Juice Shop image..."
     docker pull bkimminich/juice-shop:latest
+    
+    if ($LASTEXITCODE -ne 0) {
+        Write-ColorOutput Red "ERROR: Failed to pull Juice Shop image"
+        Write-ColorOutput Yellow "Check your internet connection and Docker status"
+        exit 1
+    }
 
-    Write-ColorOutput Yellow "Starting container..."
+    Write-Output ""
+    Write-ColorOutput Yellow "Starting Juice Shop container..."
     docker-compose up -d
+    
+    if ($LASTEXITCODE -ne 0) {
+        Write-ColorOutput Red "ERROR: Failed to start container"
+        Write-ColorOutput Yellow "Run 'docker-compose logs' to see details"
+        exit 1
+    }
 
     Write-Output ""
     Write-ColorOutput Yellow "Waiting for Juice Shop to start..."
-    $maxRetries = 30
+    Write-ColorOutput Cyan "  (This may take 30-60 seconds...)"
+    
+    $maxRetries = 60
     $retries = 0
+    $connected = $false
 
     while ($retries -lt $maxRetries) {
         try {
             $response = Invoke-WebRequest -Uri "http://localhost:3000" -UseBasicParsing -TimeoutSec 2 -ErrorAction SilentlyContinue
             if ($response.StatusCode -eq 200) {
-                Write-ColorOutput Green "Juice Shop is ready!"
-                Write-ColorOutput Cyan "Access: http://localhost:3000"
+                $connected = $true
+                Write-Output ""
+                Write-ColorOutput Green "OK Juice Shop is ready!"
+                Write-ColorOutput Cyan "  Access: http://localhost:3000"
                 break
             }
-        } catch {
+        }
+        catch {
+            # Check if container is still running
+            $containerStatus = docker ps --filter "name=juice-shop" --format "{{.Status}}" 2>&1
+            
+            if ($containerStatus -match "Up") {
+                # Container is running, just waiting for it to be ready
+                Write-Host "." -NoNewline
+            }
+            else {
+                Write-Output ""
+                Write-ColorOutput Red "ERROR: Container stopped unexpectedly"
+                Write-ColorOutput Yellow "Checking logs..."
+                docker-compose logs --tail=20
+                exit 1
+            }
+            
             $retries++
             Start-Sleep -Seconds 2
         }
     }
 
-    if ($retries -eq $maxRetries) {
-        Write-ColorOutput Red "Timeout waiting for Juice Shop. Check: docker-compose logs"
+    if (-not $connected) {
+        Write-Output ""
+        Write-ColorOutput Red "ERROR: Timeout waiting for Juice Shop (2 minutes)"
+        Write-Output ""
+        Write-ColorOutput Yellow "Diagnostic information:"
+        Write-ColorOutput Cyan "Container status:"
+        docker ps -a --filter "name=juice-shop"
+        Write-Output ""
+        Write-ColorOutput Cyan "Last 30 lines of logs:"
+        docker-compose logs --tail=30
+        Write-Output ""
+        Write-ColorOutput Yellow "Troubleshooting steps:"
+        Write-ColorOutput Cyan "1. Run: docker-compose logs -f"
+        Write-ColorOutput Cyan "2. Check if port 3000 is already in use"
+        Write-ColorOutput Cyan "3. Run: docker-compose down && docker-compose up -d"
         exit 1
     }
 
