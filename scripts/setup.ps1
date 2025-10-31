@@ -334,6 +334,114 @@ function Verify-Python312 {
     return $true
 }
 
+function Test-NodeJS {
+    if (Get-Command node -ErrorAction SilentlyContinue) {
+        $nodeVersion = & node --version 2>&1
+        if ($nodeVersion -match "v\d+\.\d+\.\d+") {
+            return @{Installed=$true; Version=$nodeVersion}
+        }
+    }
+    return @{Installed=$false; Version=$null}
+}
+
+function Install-NodeJS {
+    Write-ColorOutput Cyan "========================================"
+    Write-ColorOutput Cyan "Installing Node.js"
+    Write-ColorOutput Cyan "========================================"
+    Write-Output ""
+    
+    Write-ColorOutput Yellow "Downloading Node.js LTS installer..."
+    
+    $nodeVersion = "24.11.0"
+    $nodeUrl = "https://nodejs.org/dist/v$nodeVersion/node-v$nodeVersion-x64.msi"
+    $downloadPath = "$env:TEMP\node-installer.msi"
+    
+    Write-ColorOutput Cyan "Version: v$nodeVersion (Active LTS - Krypton)"
+    Write-ColorOutput Cyan "Status: Secure version with latest patches"
+    Write-Output ""
+    
+    try {
+        $ProgressPreference = 'SilentlyContinue'
+        Invoke-WebRequest -Uri $nodeUrl -OutFile $downloadPath -UseBasicParsing
+        Write-ColorOutput Green "Download complete!"
+    } catch {
+        Write-ColorOutput Red "ERROR downloading Node.js: $_"
+        Write-Output ""
+        Write-ColorOutput Yellow "Please download manually from:"
+        Write-ColorOutput Cyan "https://nodejs.org/"
+        return $false
+    }
+    
+    Write-Output ""
+    Write-ColorOutput Yellow "Installing Node.js..."
+    Write-ColorOutput Yellow "This may take a few minutes..."
+    
+    try {
+        Start-Process msiexec.exe -ArgumentList "/i", $downloadPath, "/quiet", "/norestart" -Wait -NoNewWindow
+        Write-ColorOutput Green "Installation complete!"
+        
+        Remove-Item -Path $downloadPath -Force -ErrorAction SilentlyContinue
+        
+        Write-Output ""
+        Write-ColorOutput Yellow "IMPORTANT: You must restart PowerShell for changes to take effect!"
+        Write-Output ""
+        
+        # Refresh environment variables in current session
+        $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+        
+        return $true
+        
+    } catch {
+        Write-ColorOutput Red "ERROR during installation: $_"
+        Remove-Item -Path $downloadPath -Force -ErrorAction SilentlyContinue
+        return $false
+    }
+}
+
+function Verify-NodeJS {
+    Write-ColorOutput Yellow "Checking Node.js installation..."
+    
+    $nodeInfo = Test-NodeJS
+    
+    if (-not $nodeInfo.Installed) {
+        Write-ColorOutput Red "Node.js not found!"
+        Write-Output ""
+        Write-ColorOutput Yellow "Node.js is required for Browser Library (Playwright)"
+        Write-Output ""
+        
+        $installNode = Read-Host "Install Node.js now? (y/n)"
+        
+        if ($installNode -eq 'y' -or $installNode -eq 'Y') {
+            $success = Install-NodeJS
+            if ($success) {
+                Write-Output ""
+                Write-ColorOutput Green "Node.js installed successfully!"
+                Write-ColorOutput Yellow "Please restart PowerShell and run this script again."
+                exit 0
+            } else {
+                Write-ColorOutput Yellow "Please install Node.js manually from: https://nodejs.org/"
+                exit 1
+            }
+        } else {
+            Write-ColorOutput Yellow "Node.js is required. Please install it manually."
+            Write-ColorOutput Cyan "https://nodejs.org/"
+            return $false
+        }
+    }
+    
+    Write-ColorOutput Green "OK Node.js found: $($nodeInfo.Version)"
+    
+    # Verify npm as well
+    if (Get-Command npm -ErrorAction SilentlyContinue) {
+        $npmVersion = & npm --version 2>&1
+        Write-ColorOutput Green "OK npm found: v$npmVersion"
+        return $true
+    } else {
+        Write-ColorOutput Red "npm not found (should come with Node.js)"
+        return $false
+    }
+}
+
 function Get-ChromeVersion {
     $chromePaths = @(
         "${env:ProgramFiles}\Google\Chrome\Application\chrome.exe",
@@ -587,25 +695,34 @@ function Setup-RobotFramework {
     Write-ColorOutput Green "OK All libraries installed successfully!"
     
     Write-Output ""
-    Write-ColorOutput Yellow "[4.1/5] Initializing Browser Library (Playwright)..."
+    Write-ColorOutput Yellow "[4.1/5] Checking Node.js for Browser Library..."
     Write-Output ""
     
-    try {
-        Write-ColorOutput Yellow "  -> Running rfbrowser init..."
-        Write-ColorOutput Cyan "     (This will download Playwright browser binaries - may take a few minutes)"
+    if (-not (Verify-NodeJS)) {
+        Write-ColorOutput Red "Cannot initialize Browser Library without Node.js"
+        Write-ColorOutput Yellow "Skipping Browser Library initialization..."
+    } else {
+        Write-Output ""
+        Write-ColorOutput Yellow "[4.2/5] Initializing Browser Library (Playwright)..."
         Write-Output ""
         
-        & $pythonCmd -m Browser.entry init
-        
-        if ($LASTEXITCODE -eq 0) {
-            Write-ColorOutput Green "OK Browser Library initialized successfully!"
-        } else {
-            Write-ColorOutput Red "ERROR Failed to initialize Browser Library"
-            Write-ColorOutput Yellow "You may need to run manually: python -m Browser.entry init"
+        try {
+            Write-ColorOutput Yellow "  -> Running rfbrowser init..."
+            Write-ColorOutput Cyan "     (This will download Playwright browser binaries - may take a few minutes)"
+            Write-Output ""
+            
+            & $pythonCmd -m Browser.entry init
+            
+            if ($LASTEXITCODE -eq 0) {
+                Write-ColorOutput Green "OK Browser Library initialized successfully!"
+            } else {
+                Write-ColorOutput Red "ERROR Failed to initialize Browser Library"
+                Write-ColorOutput Yellow "You may need to run manually: python -m Browser.entry init"
+            }
+        } catch {
+            Write-ColorOutput Red "ERROR Error initializing Browser Library: $_"
+            Write-ColorOutput Yellow "Try running manually: python -m Browser.entry init"
         }
-    } catch {
-        Write-ColorOutput Red "ERROR Error initializing Browser Library: $_"
-        Write-ColorOutput Yellow "Try running manually: python -m Browser.entry init"
     }
     
     Write-Output ""
@@ -923,21 +1040,27 @@ function Setup-Environment {
         Write-ColorOutput Yellow "  -> requirements.txt not found, skipping..."
     }
     
-    Write-ColorOutput Yellow "  -> Initializing Browser Library (Playwright)..."
-    & $pythonCmd -m pip install robotframework-browser --quiet
-    if ($LASTEXITCODE -eq 0) {
-        Write-ColorOutput Yellow "  -> Installing Playwright browser binaries..."
-        Write-ColorOutput Cyan "     (This may take a few minutes - downloading browser binaries)"
-        & $pythonCmd -m Browser.entry init
-        if ($LASTEXITCODE -ne 0) {
-            Write-ColorOutput Red "  ERROR: Failed to initialize Browser Library"
-            $installSuccess = $false
-        } else {
-            Write-ColorOutput Green "  OK Browser Library initialized!"
-        }
-    } else {
-        Write-ColorOutput Red "  ERROR: Failed to install Browser Library"
+    Write-ColorOutput Yellow "  -> Checking Node.js (required for Browser Library)..."
+    if (-not (Verify-NodeJS)) {
+        Write-ColorOutput Red "  ERROR: Node.js is required for Browser Library"
         $installSuccess = $false
+    } else {
+        Write-ColorOutput Yellow "  -> Initializing Browser Library (Playwright)..."
+        & $pythonCmd -m pip install robotframework-browser --quiet
+        if ($LASTEXITCODE -eq 0) {
+            Write-ColorOutput Yellow "  -> Installing Playwright browser binaries..."
+            Write-ColorOutput Cyan "     (This may take a few minutes - downloading browser binaries)"
+            & $pythonCmd -m Browser.entry init
+            if ($LASTEXITCODE -ne 0) {
+                Write-ColorOutput Red "  ERROR: Failed to initialize Browser Library"
+                $installSuccess = $false
+            } else {
+                Write-ColorOutput Green "  OK Browser Library initialized!"
+            }
+        } else {
+            Write-ColorOutput Red "  ERROR: Failed to install Browser Library"
+            $installSuccess = $false
+        }
     }
     
     Write-Output ""
