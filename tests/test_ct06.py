@@ -1,3 +1,7 @@
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 import pytest
 import requests
 import re
@@ -27,3 +31,9 @@ def test_ct06_user_credentials(api_headers, config):
             found.append(f"{name} - {item.get('description', '')}")
     
     assert len(found) > 0, "No credentials found"
+
+
+if __name__ == "__main__":
+    import os
+    os.chdir(Path(__file__).parent.parent)
+    pytest.main([__file__, "-v"])

@@ -1,3 +1,7 @@
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 import pytest
 import requests
 
@@ -13,3 +17,9 @@ def test_ct04_database_schema(api_headers, config):
     body = response.text
     assert "CREATE TABLE" in body
     assert any(keyword in body for keyword in ["Users", "Products", "Feedback", "BasketItems"])
+
+
+if __name__ == "__main__":
+    import os
+    os.chdir(Path(__file__).parent.parent)
+    pytest.main([__file__, "-v"])

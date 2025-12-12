@@ -1,3 +1,7 @@
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 import pytest
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -29,3 +33,9 @@ def test_ct03_login_bender(selenium_driver, config):
     account_button.click()
     
     wait.until(EC.text_to_be_present_in_element((By.TAG_NAME, "body"), HomeLocators.ACCOUNT_BENDER))
+
+
+if __name__ == "__main__":
+    import os
+    os.chdir(Path(__file__).parent.parent)
+    pytest.main([__file__, "-v"])
