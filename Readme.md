@@ -320,7 +320,14 @@ Este projeto está sob a licença MIT.
 
 ## 👥 Autores
 
-ASTRID-RESEARCH
+- **Samuel Sousa Teles** [ORCID: 0009-0009-9318-5676](https://orcid.org/0009-0009-9318-5676)  
+  Universidade Estadual do Ceará | [samuel.teles@aluno.uece.br](mailto:samuel.teles@aluno.uece.br)
+
+- **Rubens Abraão da Silva Sousa** [ORCID: 0000-0003-3385-5913](https://orcid.org/0000-0003-3385-5913)  
+  Universidade Estadual do Ceará | [abraao.sousa@aluno.uece.br](mailto:abraao.sousa@aluno.uece.br)
+
+- **Ismayle de Sousa Santos** [ORCID: 0000-0001-5580-643X](https://orcid.org/0000-0001-5580-643X)  
+  Universidade Estadual do Ceará | [ismayle.santos@uece.br](mailto:ismayle.santos@uece.br)
 
 ## 🔗 Links Úteis
 
@@ -328,3 +335,4 @@ ASTRID-RESEARCH
 - [OWASP Juice Shop](https://owasp.org/www-project-juice-shop/)
 - [SeleniumLibrary](https://github.com/robotframework/SeleniumLibrary)
 - [Browser Library](https://github.com/MarketSquare/robotframework-browser)
+
